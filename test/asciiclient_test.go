@@ -5,36 +5,29 @@
 package test
 
 import (
-	"log"
-	"os"
+	"io/ioutil"
 	"testing"
 
-	"github.com/goburrow/modbus"
-)
-
-const (
-	asciiDevice = "/dev/pts/6"
+	"github.com/gochik/modbus"
 )
 
 func TestASCIIClient(t *testing.T) {
+	f, err := ioutil.TempFile("", "asciidevice*")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Diagslave does not support broadcast id.
-	handler := modbus.NewASCIIClientHandler(asciiDevice)
-	handler.SlaveId = 17
+	handler := modbus.NewASCIIClientHandler(f)
+	handler.SetSlave(17)
 	ClientTestAll(t, modbus.NewClient(handler))
 }
 
 func TestASCIIClientAdvancedUsage(t *testing.T) {
-	handler := modbus.NewASCIIClientHandler(asciiDevice)
-	handler.BaudRate = 19200
-	handler.DataBits = 8
-	handler.Parity = "E"
-	handler.StopBits = 1
-	handler.SlaveId = 12
-	handler.Logger = log.New(os.Stdout, "ascii: ", log.LstdFlags)
-	err := handler.Connect()
+	f, err := ioutil.TempFile("", "asciidevice_advanced*")
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler := modbus.NewASCIIClientHandler(f)
 	defer handler.Close()
 
 	client := modbus.NewClient(handler)

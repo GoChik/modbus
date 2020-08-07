@@ -5,11 +5,10 @@
 package test
 
 import (
-	"log"
-	"os"
+	"io/ioutil"
 	"testing"
 
-	"github.com/goburrow/modbus"
+	"github.com/gochik/modbus"
 )
 
 const (
@@ -17,21 +16,22 @@ const (
 )
 
 func TestRTUClient(t *testing.T) {
+	f, err := ioutil.TempFile("", "rtudevice*")
+	if err != nil {
+		panic(err)
+	}
 	// Diagslave does not support broadcast id.
-	handler := modbus.NewRTUClientHandler(rtuDevice)
+	handler := modbus.NewRTUClientHandler(f, 19200)
 	handler.SlaveId = 17
 	ClientTestAll(t, modbus.NewClient(handler))
 }
 
 func TestRTUClientAdvancedUsage(t *testing.T) {
-	handler := modbus.NewRTUClientHandler(rtuDevice)
-	handler.BaudRate = 19200
-	handler.DataBits = 8
-	handler.Parity = "E"
-	handler.StopBits = 1
-	handler.SlaveId = 11
-	handler.Logger = log.New(os.Stdout, "rtu: ", log.LstdFlags)
-	err := handler.Connect()
+	f, err := ioutil.TempFile("", "rtudevice_advanced*")
+	if err != nil {
+		panic(err)
+	}
+	handler := modbus.NewRTUClientHandler(f, 19200)
 	if err != nil {
 		t.Fatal(err)
 	}
