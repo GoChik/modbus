@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"time"
+	"io"
 )
 
 const (
@@ -23,21 +23,19 @@ const (
 // ASCIIClientHandler implements Packager and Transporter interface.
 type ASCIIClientHandler struct {
 	asciiPackager
-	asciiSerialTransporter
+	serial
 }
 
 // NewASCIIClientHandler allocates and initializes a ASCIIClientHandler.
-func NewASCIIClientHandler(address string) *ASCIIClientHandler {
+func NewASCIIClientHandler(transporter io.ReadWriteCloser) *ASCIIClientHandler {
 	handler := &ASCIIClientHandler{}
-	handler.Address = address
-	handler.Timeout = serialTimeout
-	handler.IdleTimeout = serialIdleTimeout
+	handler.transport = transporter
 	return handler
 }
 
 // ASCIIClient creates ASCII client with default handler and given connect string.
-func ASCIIClient(address string) Client {
-	handler := NewASCIIClientHandler(address)
+func ASCIIClient(transporter io.ReadWriteCloser) Client {
+	handler := NewASCIIClientHandler(transporter)
 	return NewClient(handler)
 }
 
@@ -160,26 +158,9 @@ func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	return
 }
 
-// asciiSerialTransporter implements Transporter interface.
-type asciiSerialTransporter struct {
-	serialPort
-}
-
-func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	mb.serialPort.mu.Lock()
-	defer mb.serialPort.mu.Unlock()
-
-	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
-		return
-	}
-	// Start the timer to close when idle
-	mb.serialPort.lastActivity = time.Now()
-	mb.serialPort.startCloseTimer()
-
+func (h *ASCIIClientHandler) Send(aduRequest []byte) (aduResponse []byte, err error) {
 	// Send the request
-	mb.serialPort.logf("modbus: sending %q\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	if _, err = h.Write(aduRequest); err != nil {
 		return
 	}
 	// Get the response
@@ -187,7 +168,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 	var data [asciiMaxSize]byte
 	length := 0
 	for {
-		if n, err = mb.port.Read(data[length:]); err != nil {
+		if n, err = h.Read(data[length:]); err != nil {
 			return
 		}
 		length += n
@@ -202,7 +183,6 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 		}
 	}
 	aduResponse = data[:length]
-	mb.serialPort.logf("modbus: received %q\n", aduResponse)
 	return
 }
 

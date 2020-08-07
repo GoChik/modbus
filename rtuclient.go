@@ -16,26 +16,29 @@ const (
 	rtuMaxSize = 256
 
 	rtuExceptionSize = 5
+
+	operationTimeout = 30 * time.Second
 )
 
 // RTUClientHandler implements Packager and Transporter interface.
 type RTUClientHandler struct {
 	rtuPackager
-	rtuSerialTransporter
+	serial
+	baudrate uint32
 }
 
 // NewRTUClientHandler allocates and initializes a RTUClientHandler.
-func NewRTUClientHandler(address string) *RTUClientHandler {
-	handler := &RTUClientHandler{}
-	handler.Address = address
-	handler.Timeout = serialTimeout
-	handler.IdleTimeout = serialIdleTimeout
+func NewRTUClientHandler(transport io.ReadWriteCloser, baudrate uint32) *RTUClientHandler {
+	handler := &RTUClientHandler{
+		baudrate: baudrate,
+	}
+	handler.transport = transport
 	return handler
 }
 
 // RTUClient creates RTU client with default handler and given connect string.
-func RTUClient(address string) Client {
-	handler := NewRTUClientHandler(address)
+func RTUClient(transport io.ReadWriteCloser, baudrate uint32) Client {
+	handler := NewRTUClientHandler(transport, baudrate)
 	return NewClient(handler)
 }
 
@@ -110,36 +113,24 @@ func (mb *rtuPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	return
 }
 
-// rtuSerialTransporter implements Transporter interface.
-type rtuSerialTransporter struct {
-	serialPort
-}
-
-func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
-		return
-	}
-	// Start the timer to close when idle
-	mb.serialPort.lastActivity = time.Now()
-	mb.serialPort.startCloseTimer()
+// Send sends a request through RTU client and recives the reply
+func (h *RTUClientHandler) Send(aduRequest []byte) (aduResponse []byte, err error) {
 
 	// Send the request
-	mb.serialPort.logf("modbus: sending % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	if _, err = h.Write(aduRequest); err != nil {
 		return
 	}
 	function := aduRequest[1]
 	functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
-	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
+	time.Sleep(h.calculateDelay(len(aduRequest) + bytesToRead))
 
 	var n int
 	var n1 int
 	var data [rtuMaxSize]byte
 	//We first read the minimum length and then read either the full package
 	//or the error package, depending on the error status (byte 2 of the response)
-	n, err = io.ReadAtLeast(mb.port, data[:], rtuMinSize)
+	n, err = io.ReadAtLeast(h, data[:], rtuMinSize)
 	if err != nil {
 		return
 	}
@@ -149,7 +140,7 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 		if n < bytesToRead {
 			if bytesToRead > rtuMinSize && bytesToRead <= rtuMaxSize {
 				if bytesToRead > n {
-					n1, err = io.ReadFull(mb.port, data[n:bytesToRead])
+					n1, err = io.ReadFull(h, data[n:bytesToRead])
 					n += n1
 				}
 			}
@@ -157,7 +148,7 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	} else if data[1] == functionFail {
 		//for error we need to read 5 bytes
 		if n < rtuExceptionSize {
-			n1, err = io.ReadFull(mb.port, data[n:rtuExceptionSize])
+			n1, err = io.ReadFull(h, data[n:rtuExceptionSize])
 		}
 		n += n1
 	}
@@ -166,23 +157,22 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 		return
 	}
 	aduResponse = data[:n]
-	mb.serialPort.logf("modbus: received % x\n", aduResponse)
 	return
 }
 
 // calculateDelay roughly calculates time needed for the next frame.
 // See MODBUS over Serial Line - Specification and Implementation Guide (page 13).
-func (mb *rtuSerialTransporter) calculateDelay(chars int) time.Duration {
-	var characterDelay, frameDelay int // us
+func (h *RTUClientHandler) calculateDelay(chars int) time.Duration {
+	var characterDelay, frameDelay uint32 // us
 
-	if mb.BaudRate <= 0 || mb.BaudRate > 19200 {
+	if h.baudrate <= 0 || h.baudrate > 19200 {
 		characterDelay = 750
 		frameDelay = 1750
 	} else {
-		characterDelay = 15000000 / mb.BaudRate
-		frameDelay = 35000000 / mb.BaudRate
+		characterDelay = 15000000 / h.baudrate
+		frameDelay = 35000000 / h.baudrate
 	}
-	return time.Duration(characterDelay*chars+frameDelay) * time.Microsecond
+	return time.Duration(characterDelay*uint32(chars)+frameDelay) * time.Microsecond
 }
 
 func calculateResponseLength(adu []byte) int {
